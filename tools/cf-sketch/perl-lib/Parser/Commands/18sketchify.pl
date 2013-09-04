@@ -77,20 +77,12 @@ sub command_sketchify
     }
 
     # Read bundles
-    my $cfpromises = $Config{dcapi}->cfpromises;
-    # Get JSON output for the file from cf-promises. For now error and log messages are included in
-    # the output, so we filter them out.
-    Util::message("Reading file '$file'.\n");
-    my $json_txt = `$cfpromises -p json $file`;
-    if ($?)
+    my $json = Util::parse_cf_file($Config{api}, $file);
+    unless (defined($json))
     {
-        Util::error("Error: $cfpromises was unable to parse file '$file'.\n");
-        Util::error("$json_txt") if $json_txt;
+        Util::error("Something went wrong reading file '$file' - aborting.\n");
         return;
     }
-    my @json_lines = grep { !/^\d{4}-\d{2}/ } split '\n', $json_txt;
-    $json_txt = join("\n", @json_lines);
-    my $json = $Config{dcapi}->decode($json_txt);
 
     Util::warning("JSON from $file: ".Dumper($json)."\n") if $Config{verbose};
 

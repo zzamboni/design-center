@@ -631,4 +631,32 @@ sub choose_one
   return $which-1;
 }
 
+sub parse_cf_file
+{
+    my $api = shift;
+    my $file = shift;
+
+    my $cfpromises = $api->cfpromises;
+    unless ($cfpromises) {
+      Util::error("Cannot find cf-promises on this system.\n");
+      return undef;
+    }
+
+    # Get JSON output for the file from cf-promises. For now error and log messages are included in
+    # the output, so we filter them out.
+    Util::message("Reading file '$file'.\n");
+    my $json_txt = `$cfpromises -p json $file 2>/dev/null`;
+    if ($?)
+    {
+        Util::error("Error: $cfpromises was unable to parse file '$file'.\n");
+        Util::error("$json_txt") if $json_txt;
+        return undef;
+    }
+    my @json_lines = grep { !/^\d{4}-\d{2}/ } split '\n', $json_txt;
+    $json_txt = join("\n", @json_lines);
+    my $json = $api->decode($json_txt);
+
+    return $json;
+}
+
 1;
