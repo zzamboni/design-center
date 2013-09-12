@@ -129,7 +129,7 @@ sub command_analyze
         print_row($wiki_out ? "wiki_hdr" : "csv", 'sketch_name', @fields);
         foreach my $s (sort keys %result)
         {
-            print_row($wiki_out ? "wiki" : "csv", $s, map { $result{$s}->{$_} ? 'X' : '' } @fields);
+            print_row($wiki_out ? "wiki" : "csv", $s, map { $result{$s}->{$_} ? '1' : '' } @fields);
         }
     }
 }
