@@ -1,0 +1,23 @@
+body file control
+{
+      namespace => "cfdc_system_issue_contact_info";
+}
+bundle agent issue(runenv, metadata, contactinfo)
+{
+
+  classes:
+      "$(vars)" expression => "default:runenv_$(runenv)_$(vars)";
+      "not_$(vars)" expression => "!default:runenv_$(runenv)_$(vars)";
+
+  vars:
+      "activation_id" string => canonify("$(this.bundle)_$($(metadata)[activation][identifier])_$($(metadata)[activation][timestamp])");
+
+      "vars" slist => { "@(default:$(runenv).env_vars)" };
+      "$(vars)" string => "$(default:$(runenv).$(vars))";
+
+  files:
+      "/etc/issue"
+        create => "true",
+        edit_line => default:replace_or_add("For support for this system.*",
+                                    "For support for this system, contact $(contactinfo)");
+}

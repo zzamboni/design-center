@@ -1,0 +1,54 @@
+{
+   "api" : {
+      "issue" : [
+         {
+            "name" : "runenv",
+            "type" : "environment"
+         },
+         {
+            "name" : "metadata",
+            "type" : "metadata"
+         },
+         {
+            "description" : "Contact information",
+            "name" : "contactinfo",
+            "type" : "string"
+         }
+      ]
+   },
+   "interface" : [
+      "update_issue.cf"
+   ],
+   "manifest" : {
+      "README.md" : {
+         "documentation" : true
+      },
+      "update_issue.cf" : {
+         "desc" : "main file"
+      }
+   },
+   "metadata" : {
+      "authors" : [
+         "Diego Zamboni <diego.zamboni@cfengine.com>"
+      ],
+      "depends" : {
+         "CFEngine::stdlib" : {
+            "version" : 111
+         },
+         "cfengine" : {
+            "version" : "3.5.0"
+         }
+      },
+      "description" : "Add contact information to /etc/issue.",
+      "license" : "MIT",
+      "name" : "System::issue_contact_info",
+      "tags" : [
+         "system",
+         "contact",
+         "sketchify_generated",
+         "issue"
+      ],
+      "version" : "1.0"
+   },
+   "namespace" : "cfdc_system_issue_contact_info"
+}
