@@ -19,12 +19,15 @@ my $DATE="July 2013";
 
 my $inputs_root;
 my $configdir;
+my $enterprise_configs;
 my @toremove;
 
 BEGIN
 {
-    # Inputs directory depending on root/non-root/policy hub
-    $inputs_root = $> != 0 ? glob("~/.cfagent/inputs") : (-e '/var/cfengine/state/am_policy_hub' ? '/var/cfengine/masterfiles' : '/var/cfengine/inputs');
+    # Inputs directory depending on root/non-root/policy hub/enterprise
+    $inputs_root = $> != 0 ? glob("~/.cfagent/inputs") : (-e '/var/cfengine/state/am_policy_hub' ? (-e '/root/masterfiles' ? '/root/masterfiles' : '/var/cfengine/masterfiles') : '/var/cfengine/inputs');
+    # Are Enterprise config files there?
+    $enterprise_configs = (-e "$inputs_root/sketches/meta") ? "$inputs_root/sketches/meta" : undef;
     # Configuration directory depending on root/non-root
     $configdir = $> == 0 ? '/etc/cf-sketch' : glob('~/.cf-sketch');
 }
@@ -78,9 +81,9 @@ my %options = (
                activated => 'any',
                veryverbose => 0,
                standalone => 0,
-               runfile => "$inputs_root/cf-sketch-runfile.cf",
+               runfile => $enterprise_configs ? "$enterprise_configs/api-runfile.cf" : "$inputs_root/cf-sketch-runfile.cf",
                vardata => undef,
-               standalonerunfile => "$inputs_root/cf-sketch-runfile-standalone.cf",
+               standalonerunfile => $enterprise_configs ? "$enterprise_configs/api-runfile-standalone.cf" : "$inputs_root/cf-sketch-runfile-standalone.cf",
                installsource => Util::local_cfsketches_source(File::Spec->curdir()) || 'https://raw.github.com/cfengine/design-center/master/sketches/cfsketches.json',
                constdata => $constdata,
                # These are hardcoded above, we put them here for convenience
@@ -364,7 +367,7 @@ sub api_interaction
                  filter_inputs => $options{filter},
                  standalone_inputs => $options{standalone_inputs},
                 },
-                vardata => $options{vardata} || "$inputs_root/cfsketch-vardata.conf",
+                vardata => $options{vardata} || ($enterprise_configs ? "$enterprise_configs/vardata.conf" : "$inputs_root/cfsketch-vardata.conf"),
                 constdata => $options{constdata},
                };
 
