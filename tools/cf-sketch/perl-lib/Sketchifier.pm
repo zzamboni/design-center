@@ -9,6 +9,8 @@ use File::Basename;
 use File::Copy;
 use Term::ANSIColor qw(:constants);
 
+##### Constructors and initializers
+
 sub new
 {
     my $class = shift;
@@ -17,47 +19,6 @@ sub new
 
     $self->init;
     return $self;
-}
-
-sub set_input_script
-{
-    my $self=shift;
-    my $file=shift;
-    if (-f $file)
-        {
-            Util::warning("Using $file as an input script.\n");
-            local @ARGV=($file);
-            $self->{input_script} = $file;
-            my @lines=<ARGV>;
-            chomp(@lines);
-            $self->{input_script_lines} = [ @lines ];
-            return 1;
-        }
-        else
-        {
-            Util::error("Error: I cannot find script file $file.\n");
-            return;
-        }
-
-}
-
-sub have_input_script
-{
-    my $self=shift;
-    return defined($self->{input_script});
-}
-
-sub next_input_script_line
-{
-    my $self=shift;
-    if ($self->have_input_script)
-    {
-        return shift(@{$self->{input_script_lines}});
-    }
-    else
-    {
-        return undef;
-    }
 }
 
 sub init
@@ -235,205 +196,7 @@ sub init_sketch_skeleton
 
 }
 
-sub prompt_sketch_datum
-{
-    my $self=shift;
-
-    my $desc = shift;
-    my $default = shift;
-    my $validate = shift;
-    my $errmsg = shift;
-    my $hint = shift;
-
-    my $value;
-    my $valid;
-    do
-    {
-        my $prompt = $desc . ($hint ? " ($hint)" : "") . ": ";
-        if ($self->have_input_script && defined($value = $self->next_input_script_line))
-        {
-            Util::message("$prompt$value\n");
-        }
-        else
-        {
-            $value = Util::single_prompt($prompt, $default);
-        }
-        if (!defined($value) || $value eq 'STOP')
-        {
-            Util::warning("Stopping at your request.\n");
-            return (undef, 1);
-        }
-        if ($validate)
-        {
-            $valid = $validate->($value);
-            if (!$valid)
-            {
-                Util::error("Error: $errmsg\n");
-            }
-        }
-        else
-        {
-            $valid = 1;
-        }
-    } while (!$valid);
-    return ($value, undef);
-}
-
-sub sketch_confirmation_screen
-{
-    my $self = shift;
-
-    my $data = $self->{query_values};
-    my @order = @{$self->{query_order}};
-    my $spec = $self->{query_spec};
-
-    Util::warning("\nYou now have a chance to modify any of the information you entered.\n\n");
-    while (1)
-    {
-        my @menu=();
-        for my $p (@order)
-        {
-            push @menu, BLUE.$self->{query_spec}->{$p}->{desc} . ": " . RESET . (exists($spec->{$p}->{display}) ? $spec->{$p}->{display}->($data->{$p}) : (ref($data->{$p}) eq '' ? $data->{$p} : Dumper($data->{$p}) ) );
-        }
-        my $n = Util::choose_one("These are the current sketch parameters:", "Please enter the number of the part you want to modify", "Enter to continue", @menu);
-        if ($n == -1)
-        {
-            return 1;
-        }
-        my ($val, $stop) = $self->query_parameter($order[$n]);
-        next if $stop;
-        $self->{query_values}->{$order[$n]} = $val;
-    }
-}
-
-sub write_new_sketch
-{
-    my $self = shift;
-
-    $self->merge_sketch_data($self->{new_sketch});
-    $self->merge_special_sketch_data;
-
-    for my $v (qw(new_sketch file file_base
-                  bundle insert_params files_to_copy outputdir
-                )) {
-        $$v = $self->{$v};
-    }
-    my $namespace = $self->{query_values}->{'#namespace'};
-    my $insert_namespace_decl = $self->{query_values}->{'#insert_namespace_decl'};
-
-    Util::message("Your new sketch will be stored under $outputdir/\n");
-    Util::dc_make_path($outputdir)
-       or do { Util::error("Error creating directory $outputdir: $!\n"); return; };
-
-    my $sketch_json = $Parser::Config{dcapi}->cencode_pretty($new_sketch);
-    Util::warning("New sketch JSON: $sketch_json\n") if $Parser::Config{verbose};
-
-    # Now output the files
-    my $json_file = "$outputdir/sketch.json";
-    Util::message("Writing $json_file\n");
-    open F, ">$json_file"
-     or do { Util::error("Error opening $json_file for writing: $!\n"); return; };
-    print F $sketch_json;
-    close F;
-    my $main_file = "$outputdir/$file_base";
-    Util::message("Transferring $file to $main_file\n");
-    open S, "<$file"
-     or do { Util::error("Error opening $file for reading: $!\n"); return; };
-    open F, ">$main_file"
-     or do { Util::error("Error opening $main_file for writing: $!\n"); return; };
-    if ($insert_namespace_decl)
-    {
-        print F qq#body file control\n{\n      namespace => "$namespace";\n}\n#;
-    }
-    my $waiting_to_insert=undef;
-    while (my $line = <S>)
-    {
-        # If needed, insert the runenv and metadata parameters in the bundle
-        # declaration, and the scaffolding code right after the opening brace
-        if ($insert_params && $line =~ /^(\s*bundle\s+agent\s+$bundle\s*\()/)
-        {
-            my $str = $1;
-            $line =~ s/\Q$str\E/${str}runenv, metadata, /;
-            $waiting_to_insert = 1;
-        }
-        print F $line;
-        if ($waiting_to_insert && $line =~ /\{/)
-        {
-            my $incfile = 'REPO/sketch_template/standard.inc';
-            print F qq(#\@include "$incfile"\n\n);
-            $waiting_to_insert = undef;
-        }
-    }
-    close S; close F;
-    # Copy other files specified
-    foreach my $f (@$files_to_copy)
-    {
-        my $out_f = "$outputdir/".basename($f);
-        Util::message("Transferring $f to $out_f\n");
-        copy($f, $out_f)
-         or do { Util::error("Error copying $f to $out_f: $!\n"); return; };
-    }
-
-    # Regenerate cfsketches.json
-    Util::message("Regenerating sketch index in $Parser::Config{sourcedir}\n");
-    my ($success, $result) = main::api_interaction({
-                                                    regenerate_index => $Parser::Config{sourcedir},
-                                                   });
-
-    # Generate a README.md file
-    Util::message("Generating a README file for the new sketch.\n");
-    # We create an empty one first so the API doesn't complain that it's not there
-    open F, ">$outputdir/README.md"
-     or do { Util::error("Error creating $outputdir/README.md: $!\n"); return; };
-    close F;
-    ($success, $result) =  main::api_interaction({
-                                                  describe => 'README',
-                                                  search => $sketchname,
-                                                 },
-                                                 main::make_list_printer('search', 'README.md'));
-
-    Util::success("\nWe are done! Please check your new sketch under $outputdir.\n\n");
-    Util::success(qq(There are a few things you may want to check by hand, since I don't know how to
-do them automatically yet:
-
-1. Verify the dependencies for your sketch in $json_file.
-   By default I added only CFEngine::sketch_template as a dependency,
-   which is needed by all sketches.
-2. Make sure all the calls to bodies/bundles in the standard library are
-   prefixed with 'default:' so that they are found (the stdlib lives in the
-   'default' namespace). For example, if your sketch uses the if_repaired
-   body definition, you need to replace calls like this:
-       classes => if_repaired("foo")
-   with
-       classes => default:if_repaired("foo")
-3. Make sure variable references used in function or bundle calls are
-   prefixed with the namespace for your new sketch. For example, if
-   you have something like this:
-       edit_line => default:set_config_values("mybundle.somearray")
-   you need to change it to this (assuming your sketch namespace is
-   "some_sketch"):
-       edit_line => default:set_config_values("some_sketch:mybundle.somearray")
-
-));
-
-}
-
-sub aborted
-{
-    my $self=shift;
-    return $self->{abort};
-}
-
-sub abort
-{
-    my $self=shift;
-    $self->{abort} = 1;
-}
-
-sub validate_nonzerolength { length(shift) > 0 };
-sub validate_sketchname { shift =~ /^(\w+)(::\w+)*$/ };
-sub validate_versionnumber { shift =~ /^\d+(\.\d+)*$/ };
-sub validate_yn { shift =~ /^(y(es)?|no?)?$/i }
+### Main entry points for sketchifying stuff
 
 sub do_file
 {
@@ -483,76 +246,32 @@ sub do_sketch
     $self->abort;
 }
 
-sub merge_sketch_data
+### Querying functions
+
+sub query_sketch_data
 {
     my $self = shift;
 
-    my $item = shift;
-    my $values = $self->{query_values};
+    my $query_order = $self->{query_order};
+    my $res = $self->{query_values};
 
-    if (ref $item eq 'ARRAY') {
-        foreach (@$item) {
-            $self->merge_sketch_data($_);
-        }
-    } elsif (ref $item eq 'HASH') {
-        foreach (keys %$item) {
-            my $k=$_;
-            my $v=$item->{$_};
-            # Replace hash values that exist in $values
-            if (exists($values->{$v}))
-            {
-                $item->{$k} = $values->{$v};
-                $v = $item->{$k};
-            }
-            # Also replace hash keys that exist in $values
-            if (exists($values->{$k}))
-            {
-                # Create new item with the same value but new key
-                $item->{$values->{$k}} = $v;
-                # Delete old item
-                delete $item->{$k};
-                $k = $values->{$k};
-            }
-            # Recurse into values
-            $self->merge_sketch_data($item->{$k});
-        }
-    } else {
-        # scalar, carry on
-    }
-}
-
-# Some fields that need special handling for merging data into sketch.json
-sub merge_special_sketch_data
-{
-    my $self = shift;
-
-    my $query_values = $self->{query_values};
-
-    my $new_sketch = $self->{new_sketch};
-
-    # Extra files to load
-    push @{$new_sketch->{interface}}, @{$query_values->{'#extra_interface'}};
-
-    foreach (keys %{$query_values->{'#extra_manifest'}})
+    # Sanity check first
+    for my $p (@$query_order)
     {
-        $new_sketch->{manifest}->{$_} = $query_values->{'#extra_manifest'}->{$_};
+        $self->check_parameter($p) or return;
     }
 
-    $self->{files_to_copy} = $query_values->{'#files_to_copy'};
-
-}
-
-sub check_parameter
-{
-    my $self = shift;
-    my $p = shift;
-
-    unless ($p && exists($self->{query_spec}->{$p}))
+    # Now query things
+    for my $p (@$query_order)
     {
-        Util::error("Internal error: I don't have a spec for querying parameter '$p'.\n");
-        return;
+        my ($val, $stop) = $self->query_parameter($p);
+        return if $stop;
+        $res->{$p} = $val;
     }
-    return $p;
+
+    Util::warning("Entered parameters: ".Dumper($res)."\n") if $Parser::Config{verbose};
+
+    return $res;
 }
 
 sub query_parameter
@@ -591,30 +310,48 @@ sub query_parameter
     }
 }
 
-sub query_sketch_data
+sub prompt_sketch_datum
 {
-    my $self = shift;
+    my $self=shift;
 
-    my $query_order = $self->{query_order};
-    my $res = $self->{query_values};
+    my $desc = shift;
+    my $default = shift;
+    my $validate = shift;
+    my $errmsg = shift;
+    my $hint = shift;
 
-    # Sanity check first
-    for my $p (@$query_order)
+    my $value;
+    my $valid;
+    do
     {
-        $self->check_parameter($p) or return;
-    }
-
-    # Now query things
-    for my $p (@$query_order)
-    {
-        my ($val, $stop) = $self->query_parameter($p);
-        return if $stop;
-        $res->{$p} = $val;
-    }
-
-    Util::warning("Entered parameters: ".Dumper($res)."\n") if $Parser::Config{verbose};
-
-    return $res;
+        my $prompt = $desc . ($hint ? " ($hint)" : "") . ": ";
+        if ($self->have_input_script && defined($value = $self->next_input_script_line))
+        {
+            Util::message("$prompt$value\n");
+        }
+        else
+        {
+            $value = Util::single_prompt($prompt, $default);
+        }
+        if (!defined($value) || $value eq 'STOP')
+        {
+            Util::warning("Stopping at your request.\n");
+            return (undef, 1);
+        }
+        if ($validate)
+        {
+            $valid = $validate->($value);
+            if (!$valid)
+            {
+                Util::error("Error: $errmsg\n");
+            }
+        }
+        else
+        {
+            $valid = 1;
+        }
+    } while (!$valid);
+    return ($value, undef);
 }
 
 sub query_extra_files
@@ -785,6 +522,240 @@ sub query_output_dir
     return ($self->{outputdir}, undef);
 }
 
+sub sketch_confirmation_screen
+{
+    my $self = shift;
+
+    my $data = $self->{query_values};
+    my @order = @{$self->{query_order}};
+    my $spec = $self->{query_spec};
+
+    Util::warning("\nYou now have a chance to modify any of the information you entered.\n\n");
+    while (1)
+    {
+        my @menu=();
+        for my $p (@order)
+        {
+            push @menu, BLUE.$self->{query_spec}->{$p}->{desc} . ": " . RESET . (exists($spec->{$p}->{display}) ? $spec->{$p}->{display}->($data->{$p}) : (ref($data->{$p}) eq '' ? $data->{$p} : Dumper($data->{$p}) ) );
+        }
+        my $n = Util::choose_one("These are the current sketch parameters:", "Please enter the number of the part you want to modify", "Enter to continue", @menu);
+        if ($n == -1)
+        {
+            return 1;
+        }
+        my ($val, $stop) = $self->query_parameter($order[$n]);
+        next if $stop;
+        $self->{query_values}->{$order[$n]} = $val;
+    }
+}
+
+#### Input validators
+
+sub validate_nonzerolength { length(shift) > 0 };
+sub validate_sketchname { shift =~ /^(\w+)(::\w+)*$/ };
+sub validate_versionnumber { shift =~ /^\d+(\.\d+)*$/ };
+sub validate_yn { shift =~ /^(y(es)?|no?)?$/i }
+
+
+#### Other support functions
+
+sub merge_sketch_data
+{
+    my $self = shift;
+
+    my $item = shift;
+    my $values = $self->{query_values};
+
+    if (ref $item eq 'ARRAY') {
+        foreach (@$item) {
+            $self->merge_sketch_data($_);
+        }
+    } elsif (ref $item eq 'HASH') {
+        foreach (keys %$item) {
+            my $k=$_;
+            my $v=$item->{$_};
+            # Replace hash values that exist in $values
+            if (exists($values->{$v}))
+            {
+                $item->{$k} = $values->{$v};
+                $v = $item->{$k};
+            }
+            # Also replace hash keys that exist in $values
+            if (exists($values->{$k}))
+            {
+                # Create new item with the same value but new key
+                $item->{$values->{$k}} = $v;
+                # Delete old item
+                delete $item->{$k};
+                $k = $values->{$k};
+            }
+            # Recurse into values
+            $self->merge_sketch_data($item->{$k});
+        }
+    } else {
+        # scalar, carry on
+    }
+}
+
+# Some fields that need special handling for merging data into sketch.json
+sub merge_special_sketch_data
+{
+    my $self = shift;
+
+    my $query_values = $self->{query_values};
+
+    my $new_sketch = $self->{new_sketch};
+
+    # Extra files to load
+    push @{$new_sketch->{interface}}, @{$query_values->{'#extra_interface'}};
+
+    foreach (keys %{$query_values->{'#extra_manifest'}})
+    {
+        $new_sketch->{manifest}->{$_} = $query_values->{'#extra_manifest'}->{$_};
+    }
+
+    $self->{files_to_copy} = $query_values->{'#files_to_copy'};
+
+}
+
+sub check_parameter
+{
+    my $self = shift;
+    my $p = shift;
+
+    unless ($p && exists($self->{query_spec}->{$p}))
+    {
+        Util::error("Internal error: I don't have a spec for querying parameter '$p'.\n");
+        return;
+    }
+    return $p;
+}
+
+sub write_new_sketch
+{
+    my $self = shift;
+
+    $self->merge_sketch_data($self->{new_sketch});
+    $self->merge_special_sketch_data;
+
+    for my $v (qw(new_sketch file file_base
+                  bundle insert_params files_to_copy outputdir
+                )) {
+        $$v = $self->{$v};
+    }
+    my $namespace = $self->{query_values}->{'#namespace'};
+    my $insert_namespace_decl = $self->{query_values}->{'#insert_namespace_decl'};
+
+    Util::message("Your new sketch will be stored under $outputdir/\n");
+    Util::dc_make_path($outputdir)
+       or do { Util::error("Error creating directory $outputdir: $!\n"); return; };
+
+    my $sketch_json = $Parser::Config{dcapi}->cencode_pretty($new_sketch);
+    Util::warning("New sketch JSON: $sketch_json\n") if $Parser::Config{verbose};
+
+    # Now output the files
+    my $json_file = "$outputdir/sketch.json";
+    Util::message("Writing $json_file\n");
+    open F, ">$json_file"
+     or do { Util::error("Error opening $json_file for writing: $!\n"); return; };
+    print F $sketch_json;
+    close F;
+    my $main_file = "$outputdir/$file_base";
+    Util::message("Transferring $file to $main_file\n");
+    open S, "<$file"
+     or do { Util::error("Error opening $file for reading: $!\n"); return; };
+    open F, ">$main_file"
+     or do { Util::error("Error opening $main_file for writing: $!\n"); return; };
+    if ($insert_namespace_decl)
+    {
+        print F qq#body file control\n{\n      namespace => "$namespace";\n}\n#;
+    }
+    my $waiting_to_insert=undef;
+    while (my $line = <S>)
+    {
+        # If needed, insert the runenv and metadata parameters in the bundle
+        # declaration, and the scaffolding code right after the opening brace
+        if ($insert_params && $line =~ /^(\s*bundle\s+agent\s+$bundle\s*\()/)
+        {
+            my $str = $1;
+            $line =~ s/\Q$str\E/${str}runenv, metadata, /;
+            $waiting_to_insert = 1;
+        }
+        print F $line;
+        if ($waiting_to_insert && $line =~ /\{/)
+        {
+            my $incfile = 'REPO/sketch_template/standard.inc';
+            print F qq(#\@include "$incfile"\n\n);
+            $waiting_to_insert = undef;
+        }
+    }
+    close S; close F;
+    # Copy other files specified
+    foreach my $f (@$files_to_copy)
+    {
+        my $out_f = "$outputdir/".basename($f);
+        Util::message("Transferring $f to $out_f\n");
+        copy($f, $out_f)
+         or do { Util::error("Error copying $f to $out_f: $!\n"); return; };
+    }
+
+    # Regenerate cfsketches.json
+    Util::message("Regenerating sketch index in $Parser::Config{sourcedir}\n");
+    my ($success, $result) = main::api_interaction({
+                                                    regenerate_index => $Parser::Config{sourcedir},
+                                                   });
+
+    # Generate a README.md file
+    Util::message("Generating a README file for the new sketch.\n");
+    # We create an empty one first so the API doesn't complain that it's not there
+    open F, ">$outputdir/README.md"
+     or do { Util::error("Error creating $outputdir/README.md: $!\n"); return; };
+    close F;
+    ($success, $result) =  main::api_interaction({
+                                                  describe => 'README',
+                                                  search => $sketchname,
+                                                 },
+                                                 main::make_list_printer('search', 'README.md'));
+
+    Util::success("\nWe are done! Please check your new sketch under $outputdir.\n\n");
+    Util::success(qq(There are a few things you may want to check by hand, since I don't know how to
+do them automatically yet:
+
+1. Verify the dependencies for your sketch in $json_file.
+   By default I added only CFEngine::sketch_template as a dependency,
+   which is needed by all sketches.
+2. Make sure all the calls to bodies/bundles in the standard library are
+   prefixed with 'default:' so that they are found (the stdlib lives in the
+   'default' namespace). For example, if your sketch uses the if_repaired
+   body definition, you need to replace calls like this:
+       classes => if_repaired("foo")
+   with
+       classes => default:if_repaired("foo")
+3. Make sure variable references used in function or bundle calls are
+   prefixed with the namespace for your new sketch. For example, if
+   you have something like this:
+       edit_line => default:set_config_values("mybundle.somearray")
+   you need to change it to this (assuming your sketch namespace is
+   "some_sketch"):
+       edit_line => default:set_config_values("some_sketch:mybundle.somearray")
+
+));
+
+}
+
+sub aborted
+{
+    my $self=shift;
+    return $self->{abort};
+}
+
+sub abort
+{
+    my $self=shift;
+    $self->{abort} = 1;
+}
+
+
 sub determine_bundle
 {
     my $self = shift;
@@ -877,5 +848,45 @@ sub json_from_cf
     return $json;
 }
 
+sub set_input_script
+{
+    my $self=shift;
+    my $file=shift;
+    if (-f $file)
+        {
+            Util::warning("Using $file as an input script.\n");
+            local @ARGV=($file);
+            $self->{input_script} = $file;
+            my @lines=<ARGV>;
+            chomp(@lines);
+            $self->{input_script_lines} = [ @lines ];
+            return 1;
+        }
+        else
+        {
+            Util::error("Error: I cannot find script file $file.\n");
+            return;
+        }
+
+}
+
+sub have_input_script
+{
+    my $self=shift;
+    return defined($self->{input_script});
+}
+
+sub next_input_script_line
+{
+    my $self=shift;
+    if ($self->have_input_script)
+    {
+        return shift(@{$self->{input_script_lines}});
+    }
+    else
+    {
+        return undef;
+    }
+}
 
 1;
