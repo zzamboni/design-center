@@ -489,6 +489,15 @@ sub query_env_metadata_params
              );
             $self->{insert_params} = 1;
         }
+        else
+        {
+            if ($res->{'#sketch_api'}->{$bundle}->[0]->{name} eq 'runenv' &&
+                $res->{'#sketch_api'}->{$bundle}->[1]->{name} eq 'metadata')
+            {
+                splice @{$res->{'#sketch_api'}->{$bundle}}, 0, 2;
+            }
+            $self->{insert_params} = 0;
+        }
     }
     return ($self->{insert_params},undef);
 }
