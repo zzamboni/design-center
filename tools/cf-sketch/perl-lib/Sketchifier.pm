@@ -44,7 +44,7 @@ sub init
     #                    }
     $self->{query_spec} =
     {
-     '#sketchname' => {
+     '#name' => {
                        desc =>     "Sketch name",
                        def  =>     undef,
                        validate => \&validate_sketchname,
@@ -95,7 +95,7 @@ sub init
                             my $mi = $self->{query_values}->{'#extra_interface'};
                             @ei{@$mi}=();
                             return "\n".join("\n",
-                                 map { "         $_ (description: ". ($ma->{$_}->{desc} || $ma->{$_}->{comment}) . (exists($ei{$_}) ? ", loaded" : ", not loaded") . ")" } keys %$ma );
+                                 map { "         $_ (description: ". ($ma->{$_}->{desc} || $ma->{$_}->{description} || $ma->{$_}->{comment} || "none") . (exists($ei{$_}) ? ", loaded" : ", not loaded") . ")" } keys %$ma );
                         }
                        },
      '#sketch_api' => {
@@ -110,6 +110,7 @@ sub init
                                $res .= "\n         For bundle ".CYAN.$bundle.RESET."\n";
                                foreach my $p (@{$api->{$bundle}})
                                {
+                                   $Data::Dumper::Indent = 0;
                                    $res .= YELLOW."           ".$p->{name}.RESET.": ".$p->{type}.($p->{description}? " ($p->{description})" : "").($p->{validation}? " (validation: $p->{validation})" : "").($p->{default}? " [default value: ".Dumper($p->{default})."]" : "")."\n"
                                     unless $p->{type} =~ /^(metadata|environment|bundle_options|return)$/;
                                    if ($p->{type} eq 'return')
@@ -150,7 +151,7 @@ sub init
 
     # Order in which things will be queried
     $self->{query_order} = [
-                            '#sketchname',
+                            '#name',
                             '#description',
                             '#version',
                             '#license',
@@ -178,7 +179,7 @@ sub init_sketch_skeleton
                            },
                            metadata =>
                            {
-                            name => '#sketchname',
+                            name => '#name',
                             description => '#description',
                             version => '#version',
                             license => '#license',
@@ -241,9 +242,33 @@ sub do_file
 sub do_sketch
 {
     my $self=shift;
+    my $sketch=shift;
 
-    Util::error("Sorry, processing existing sketches is not yet functional.\n");
-    $self->abort;
+    my $sketches = main::get_all_sketches;
+    unless (exists($sketches->{$sketch}))
+    {
+        Util::error("Error: I cannot find sketch $sketch.\n");
+        return;
+    }
+    $self->{file_base} = $sketches->{$sketch}->{interface}->[0];
+    $self->{read_sketch} = $sketches->{$sketch};
+    $self->init_sketch_skeleton;
+
+    # Values from the sketch and later query are stored here...
+    $self->{query_values} = {};
+
+    $self->unmerge_sketch_data($sketches->{$sketch});
+
+    my $dir = main::get_sketch_directory($sketch);
+    if (!$dir)
+    {
+        Util::warning("Warning: I could not determine the location of $sketch\n");
+    }
+    $self->{query_values}->{'#outputdir'} = $dir;
+    $self->{outputdir} = $dir;
+
+    $Data::Dumper::Indent = 1;
+    print Dumper($self);
 }
 
 ### Querying functions
@@ -443,7 +468,7 @@ sub query_namespace
     my $insert_namespace_decl = undef;
     if ($self->{namespace} eq 'default')
     {
-        my $new_namespace = Util::canonify(lc("cfdc_".$self->{query_values}->{'#sketchname'}));
+        my $new_namespace = Util::canonify(lc("cfdc_".$self->{query_values}->{'#name'}));
 
         Util::warning("\nThe file '$self->{file}' does not have a namespace declaration.\n");
         Util::message("It is recommended that every sketch has its own namespace to avoid potential naming conflicts with other sketches or policies.\n");
@@ -505,16 +530,31 @@ sub query_env_metadata_params
 sub query_output_dir
 {
     my $self = shift;
+    my $olddir = $self->{outputdir};
 
     # Get output directory
-    Util::message("\nThank you! We are almost done.\n");
+#    Util::message("\nThank you! We are almost done.\n");
 
     # Generate a suggestion for the sketch directory, based on its name
-    my $sketch_dir = lc($self->{query_values}->{'#sketchname'});
-    $sketch_dir =~ s!::!/!g;
+    my $generated_dir = lc($self->{query_values}->{'#name'});
+    $generated_dir =~ s!::!/!g;
+
+    my $sketch_dir = $olddir || $generated_dir;
+
     Util::message("Please enter the directory where the new sketch will be stored.\n");
     Util::message("If you enter a relative path, it will be used within the currently configure sketch repository ($Parser::Config{sourcedir}). If you enter an absolute path, it will be used as-is. The directory will be created if needed.\n");
-    Util::message("I have generated a suggestion based on your sketch name: $sketch_dir\n");
+    if ($olddir)
+    {
+        Util::message("This is the current directory for the sketch: $sketch_dir.\n");
+        if (-d $olddir)
+        {
+            Util::message("You can reuse it and existing files will be updated, or enter a new one.\n");
+        }
+    }
+    else
+    {
+        Util::message("I have generated a suggestion based on your sketch name: $sketch_dir\n");
+    }
     ($sketch_dir, $stop) = $self->prompt_sketch_datum("Directory", $sketch_dir);
     return (undef,1) if $stop;
     # Remove ./ from the beginning if it's there
@@ -568,6 +608,7 @@ sub validate_yn { shift =~ /^(y(es)?|no?)?$/i }
 
 #### Other support functions
 
+# Merge data from $self->{query_values} onto a sketch.json data structure
 sub merge_sketch_data
 {
     my $self = shift;
@@ -604,6 +645,26 @@ sub merge_sketch_data
     } else {
         # scalar, carry on
     }
+}
+
+# Opposite of merge_sketch_data: move data from a JSON data structure into
+# $self->{query_values}
+sub unmerge_sketch_data
+{
+    my $self = shift;
+
+    my $item = shift;
+    my $navi = shift || $self->{new_sketch};
+    my $values = $self->{query_values};
+
+    for my $i (qw(name description version license tags authors))
+    {
+        $values->{'#'.$i} = $item->{metadata}->{$i};
+    }
+    $values->{'#sketch_api'} = $item->{api};
+    $values->{'#namespace'} = $item->{namespace};
+    $values->{'#extra_manifest'} = $item->{manifest};
+    $values->{'#extra_interface'} = $item->{interface};
 }
 
 # Some fields that need special handling for merging data into sketch.json

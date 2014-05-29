@@ -650,6 +650,19 @@ sub get_installed {
     return $installed;
 }
 
+# Return the source directory in which a sketch is located
+sub get_sketch_directory
+{
+    my $sketch=shift;
+    my $res=get_sketch($sketch);
+    if ($res->{$sketch}) {
+      return $res->{$sketch}->{location};
+    }
+    else {
+      return undef;
+    }
+}
+
 # Return whether a sketch is installed
 sub is_sketch_installed
 {
